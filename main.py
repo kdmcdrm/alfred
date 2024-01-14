@@ -1,35 +1,20 @@
-"""
-Chat Assistant Bot Using LLM
-
-Main Conversation
- -> Weather
-   - More weather details?
-
-ToDo:
-  - Improve latency between answer and loop to next request. It's not getting the mic ready since the prompt appears
-  - Redo Weather tool using new extraction methods
-  - Get agent to determine if a "is there anything else" prompt is needed
-
- """
-
 import logging
 import os
 
 import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
 
-import llm
-from llm import format_user_msg, format_agent_msg, init_history
-from tools.base_tools import Tool, GeneralTool, EndTool
-from tools.lighting_tool import LightingTool, LightNotFoundException
-from tools.weather_tool import WeatherTool
+from agents import OpenAIToolAgent
+from tools.base import Tool
+from tools.lighting import LightingTool, LightNotFoundException
+from tools.dismiss import DismissTool
 
 logger = logging.getLogger(__name__)
 _ = load_dotenv()
 
 print("---- Alfred Agent ---")
 # Azure config
-print("Initializing Azure")
+print("Initializing Azure Speech Services")
 SPEECH_CONFIG = speechsdk.SpeechConfig(
     subscription=os.environ["AZURE_STT_KEY"],
     region=os.environ["AZURE_STT_REGION"]
@@ -40,23 +25,34 @@ SPEECH_CONFIG.speech_synthesis_voice_name = 'en-CA-LiamNeural'
 TTS_SYNTH = speechsdk.SpeechSynthesizer(speech_config=SPEECH_CONFIG,
                                         audio_config=AUDIO_CONFIG)
 SPEECH_REC = speechsdk.SpeechRecognizer(speech_config=SPEECH_CONFIG)
+
 print("Initializing Tools...")
+sys_msg = \
+    """You are a helpful butler like Alfred from Batman. You will try to assist and will not refer to the 
+fact that you are an AI agent. You are cordial, polite, but also concise and somewhat dry in your 
+speech."""
+# Initialize lighting separately as we'll use for indicating call/response
 try:
-    lighting_tool = LightingTool()
-    TOOLS = [
-        GeneralTool(),
-        EndTool(),
-        WeatherTool(),
-        lighting_tool
-    ]
+    LIGHTING_TOOL = LightingTool(os.environ["LIGHTING_IP"])
+    ALFRED = OpenAIToolAgent(
+        model_name=os.environ["OPENAI_MODEL_NAME"],
+        api_key=os.environ["OPENAI_API_KEY"],
+        sys_msg=sys_msg,
+        tools=[
+            DismissTool(),
+            LIGHTING_TOOL
+        ]
+    )
 except LightNotFoundException:
-    print("WARNING: Will not be able to control lights")
-    TOOLS = [
-        GeneralTool(),
-        EndTool(),
-        WeatherTool(),
-    ]
-    lighting_tool = None
+    LIGHTING_TOOL = None
+    ALFRED = OpenAIToolAgent(
+        model_name=os.environ["OPENAI_MODEL_NAME"],
+        api_key=os.environ["OPENAI_API_KEY"],
+        sys_msg=sys_msg,
+        tools=[
+            DismissTool(),
+        ]
+    )
 
 
 def _print_and_speak(msg):
@@ -66,7 +62,8 @@ def _print_and_speak(msg):
 
 def main():
     """
-    Outer conversation, waits for wake word
+    Outer conversation, waits for wake word and call voice_conversation when
+    it's received.
     """
     model = speechsdk.KeywordRecognitionModel("./wake_model1/final_highfa.table")
     keyword = "Alfred are you there?"
@@ -103,32 +100,29 @@ def main():
         result = result_future.get()
 
         if result.reason == speechsdk.ResultReason.RecognizedKeyword:
-            voice_conversation()
+            run_voice_conversation()
 
 
-def voice_conversation():
+def run_voice_conversation():
     """
     Handles the voice conversation to the user, calls single_conversation for
     LLM handling
     """
-    # ToDo: This should get moved to initialization of the agent
-    # ToDo: Replace basic message history with LangChain conversation
-    history = init_history()
     # Outer loop for triggering on and off
     _print_and_speak("Yes sir, what can I help you with?")
     while True:
-        if lighting_tool is not None:
-            lighting_tool.set_listening()
+        if LIGHTING_TOOL is not None:
+            LIGHTING_TOOL.set_listening()
         print(f"You: ", end="")
         request = SPEECH_REC.recognize_once_async().get()
-        if lighting_tool is not None:
-            lighting_tool.set_done_listening()
+        if LIGHTING_TOOL is not None:
+            LIGHTING_TOOL.set_done_listening()
         print(f"{request.text}")
         if len(request.text) == 0:
             _print_and_speak("I will take my leave now, call me if you need me.")
             return
 
-        res = single_conversation(request.text, history)
+        res = ALFRED(request.text)
 
         if res == "<END_CONV>":
             _print_and_speak("Very well sir, I will be here if you need me.")
@@ -138,51 +132,7 @@ def voice_conversation():
         _print_and_speak(res)
 
 
-def single_conversation(request: str, history) -> str:
-    """
-    Handles a single tool conversation
-    """
-    # Determine relevant tool
-    #   Couldn't do all in one request, LLM was not reliable about its responses
-    tool = _determine_tool(request, TOOLS, history)
-    logger.debug(f"Tool = {type(tool)}")
-    if type(tool) == EndTool:
-        return "<END_CONV>"
 
-    # Handle the request
-    history.append(format_user_msg(request))
-    res = tool.process_request(history)
-    history.append(format_agent_msg(res))
-
-    return res
-
-
-def _determine_tool(req: str, tools: list[Tool], history: list) -> Tool:
-    template = """
-    Determine if any of the following tools, delimited by ```, 
-    would help with the request following USER: below. 
-    Respond with just the name of the tool.
-
-    ```
-    {tools}
-    ```
-    USER: {user_req}
-    """
-    tool_str = ""
-    for tool in tools:
-        tool_str += f"{tool.name}: {tool.desc}\n"
-    req_full = template.format(
-        tools=tool_str,
-        user_req=req
-    )
-    # ChatGPT would not answer correctly unless it got only the current message and original message
-    msgs = llm.send_msg_recent_hist(req_full, history, 5)
-    res = llm.call_chatgpt(msgs)
-    for tool in tools:
-        if tool.name in res:
-            return tool
-    # Fall back to general tool if none match
-    return GeneralTool()
 
 
 if __name__ == "__main__":
