@@ -3,7 +3,7 @@ An AI ChatBot to use around the house. It's an LLM agent that can call
 on tools to assist it.
 
 # Plan
- - [ ] Fix lighting tool 
+ - Re-implement using OpenAI assistants https://platform.openai.com/docs/assistants/how-it-works/creating-assistants
  - [ ] Replace TTS with Deepgram voice, does it sound better?
  - [ ] Improve dismissing
  - [ ] Improve latency
