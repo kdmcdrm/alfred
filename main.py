@@ -65,7 +65,7 @@ def main():
     Outer conversation, waits for wake word and call voice_conversation when
     it's received.
     """
-    model = speechsdk.KeywordRecognitionModel("./wake_model1/final_highfa.table")
+    model = speechsdk.KeywordRecognitionModel("./wake_model1/final_lowfa.table")
     keyword = "Alfred are you there?"
     # Create a local keyword recognizer with the default microphone device for input.
     keyword_recognizer = speechsdk.KeywordRecognizer()

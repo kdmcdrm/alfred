@@ -68,7 +68,7 @@ class OpenAIToolAgent:
         USER: {user_req}
         """
         tool_str = ""
-        for tool in tools:
+        for tool in self.tools:
             tool_str += f"{tool.name}: {tool.desc}\n"
         req_full = template.format(
             tools=tool_str,

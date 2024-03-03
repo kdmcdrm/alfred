@@ -3,7 +3,7 @@ from base import Tool
 
 
 class DismissTool(Tool):
-    name = "<END>"
+    name = "END"
     desc = """
     For requests to end the conversation, or general statements of dismissal like 'thanks' or 'that will do'."""
 
